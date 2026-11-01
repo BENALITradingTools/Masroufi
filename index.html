@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#111827"><meta name="description" content="مصروفي - سجل دخلك ومصاريفك بسهولة بالصوت أو الكتابة">
+  <link rel="manifest" href="manifest.webmanifest"><link rel="stylesheet" href="styles.css">
+  <title>مصروفي | Masroufi</title>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar">
+    <a class="brand" href="#"><span class="brand-mark">م</span><span><b>مصروفي</b><small>MASROUFI</small></span></a>
+    <nav>
+      <button class="nav-link active" data-view="dashboard"><span>⌂</span> الرئيسية</button>
+      <button class="nav-link" data-view="transactions"><span>↕</span> العمليات</button>
+      <button class="nav-link" data-view="recurring"><span>⟳</span> العمليات المتكررة</button>
+      <button class="nav-link" data-view="reports"><span>▥</span> التقارير</button>
+    </nav>
+    <div class="sidebar-bottom"><button id="themeToggle" class="nav-link"><span>◐</span> تغيير المظهر</button><p>بياناتك محفوظة على هذا الجهاز</p></div>
+  </aside>
+  <main class="main-content">
+    <header class="topbar"><div><p class="eyebrow" id="todayLabel">إدارة أموالك ببساطة</p><h1 id="pageTitle">نظرة عامة</h1></div><div class="top-actions"><select id="currencySelect" aria-label="العملة"><option value="DZD">DZD دج</option><option value="EUR">EUR €</option><option value="USD">USD $</option></select><button class="icon-button" id="mobileTheme" aria-label="تغيير المظهر">◐</button></div></header>
+    <section id="dashboardView" class="view active">
+      <div class="summary-grid">
+        <article class="summary-card balance-card"><span>الرصيد الصافي</span><strong id="balanceValue">0 دج</strong><small>الدخل ناقص المصاريف</small><div class="card-symbol">◈</div></article>
+        <article class="summary-card"><span>إجمالي الدخل</span><strong class="income-text" id="incomeValue">0 دج</strong><small>خلال الشهر الحالي</small><div class="card-symbol">↗</div></article>
+        <article class="summary-card"><span>إجمالي المصاريف</span><strong class="expense-text" id="expenseValue">0 دج</strong><small>خلال الشهر الحالي</small><div class="card-symbol">↘</div></article>
+      </div>
+      <div class="content-grid">
+        <section class="panel voice-panel"><div class="panel-heading"><div><p class="eyebrow">إضافة سريعة</p><h2>سجّل بالصوت</h2></div><span class="live-dot"></span></div>
+          <p class="muted">مثال: «خلصت 1500 دينار بنزين» أو «دخلتلي 5000 دينار خدمة»</p>
+          <button id="recordButton" class="record-button"><span class="mic-icon">🎙</span><b id="recordLabel">اضغط وتحدث</b><small id="recordHint">العربية الجزائرية · ar-DZ</small></button>
+          <div class="transcript" id="transcriptBox" hidden><span>النص المسموع</span><p id="transcriptText"></p><div class="transcript-actions"><button id="confirmVoice" class="primary-button">تأكيد وإضافة</button><button id="cancelVoice" class="ghost-button">إلغاء</button></div></div>
+          <div class="manual-entry"><button id="openAdd" class="secondary-button">＋ إضافة يدوية</button><button id="exportButton" class="ghost-button">⇩ تصدير CSV</button></div>
+          <p class="voice-warning" id="voiceWarning">قد يتطلب التعرف الصوتي اتصالاً بالإنترنت ومتصفحاً يدعمه.</p>
+        </section>
+        <section class="panel chart-panel"><div class="panel-heading"><div><p class="eyebrow">تحليل مالي</p><h2>الدخل مقابل المصاريف</h2></div><span class="period-pill">هذا الشهر</span></div><div class="chart-wrap"><canvas id="overviewChart" height="220" aria-label="رسم بياني للدخل والمصاريف"></canvas><div id="chartEmpty" class="empty-chart">أضف عملياتك لعرض التحليل</div></div></section>
+      </div>
+      <section class="panel recent-panel"><div class="panel-heading"><div><p class="eyebrow">آخر ما سجلته</p><h2>أحدث العمليات</h2></div><button class="text-button" data-goto="transactions">عرض الكل ←</button></div><div id="recentList" class="transaction-list"></div></section>
+    </section>
+    <section id="transactionsView" class="view"><section class="panel"><div class="panel-heading"><div><p class="eyebrow">السجل المالي</p><h2>كل العمليات</h2></div><button class="primary-button" id="addFromTransactions">＋ إضافة عملية</button></div><div class="filters"><input id="searchInput" placeholder="ابحث في العمليات..."/><select id="typeFilter"><option value="all">كل العمليات</option><option value="expense">المصاريف</option><option value="income">الدخل</option></select></div><div id="allTransactions" class="transaction-list"></div></section></section>
+    <section id="recurringView" class="view"><section class="panel"><div class="panel-heading"><div><p class="eyebrow">تلقائية وتنظيم</p><h2>العمليات المتكررة</h2></div><button class="primary-button" id="addRecurring">＋ إضافة متكررة</button></div><p class="muted">تُنشأ العملية تلقائياً عند فتح التطبيق بعد حلول موعدها. لن تُسجّل مرتين للفترة نفسها.</p><div id="recurringList" class="transaction-list"></div></section></section>
+    <section id="reportsView" class="view"><div class="summary-grid"><article class="summary-card"><span>متوسط المصروف اليومي</span><strong id="dailyAverage">0</strong></article><article class="summary-card"><span>عدد العمليات</span><strong id="transactionCount">0</strong></article><article class="summary-card"><span>أعلى فئة إنفاق</span><strong id="topCategory">—</strong></article></div><section class="panel"><div class="panel-heading"><div><p class="eyebrow">توزيع الإنفاق</p><h2>المصاريف حسب الفئة</h2></div></div><div id="categoryBreakdown" class="category-breakdown"></div></section><section class="panel backup-panel"><h2>النسخ الاحتياطي</h2><p class="muted">احتفظ بنسخة من بياناتك أو استعدها على هذا الجهاز أو جهاز آخر.</p><div class="manual-entry"><button id="backupButton" class="secondary-button">تنزيل نسخة احتياطية</button><label class="secondary-button file-label">استيراد نسخة<input type="file" id="restoreInput" accept="application/json" hidden></label></div></section></section>
+    <footer>مصروفي · بياناتك ملكك ومحفوظة محلياً</footer>
+  </main>
+</div>
+<div id="modal" class="modal" hidden><div class="modal-card"><div class="panel-heading"><h2 id="modalTitle">إضافة عملية</h2><button id="closeModal" class="icon-button" aria-label="إغلاق">✕</button></div><form id="entryForm"><label>نوع العملية<select id="entryType"><option value="expense">مصروف</option><option value="income">دخل</option></select></label><label>الوصف<input id="entryDescription" required maxlength="90" placeholder="مثلاً: مشتريات المنزل"></label><div class="form-row"><label>المبلغ<input id="entryAmount" type="number" min="0.01" step="0.01" required placeholder="0.00"></label><label>التاريخ<input id="entryDate" type="date" required></label></div><label>التصنيف<select id="entryCategory"></select></label><label class="check-row"><input type="checkbox" id="entryIsRecurring"> تكرار هذه العملية</label><div id="recurringOptions" hidden><label>وتيرة التكرار<select id="entryFrequency"><option value="daily">يومياً</option><option value="weekly">أسبوعياً</option><option value="monthly" selected>شهرياً</option><option value="yearly">سنوياً</option></select></label></div><button class="primary-button full-button" type="submit">حفظ العملية</button></form></div></div>
+<div id="toast" class="toast" role="status"></div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script><script src="app.js"></script>
+</body></html>
