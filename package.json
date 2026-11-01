@@ -1,0 +1,9 @@
+{
+  "name": "masroufi-voice-expenses",
+  "version": "1.4.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node server.mjs" },
+  "dependencies": { "express": "^5.1.0", "multer": "^2.0.2", "openai": "^6.15.0" },
+  "engines": { "node": ">=20" }
+}

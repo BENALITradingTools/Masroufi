@@ -26,20 +26,46 @@ $('entryIsRecurring').addEventListener('change',e=>$('recurringOptions').hidden=
 $('entryForm').addEventListener('submit',e=>{e.preventDefault();const description=$('entryDescription').value.trim();const data={type:$('entryType').value,description,amount:Number($('entryAmount').value),date:$('entryDate').value,category:description};if(!data.description||!data.date||data.amount<=0)return toast('تحقق من البيانات المدخلة');if($('entryIsRecurring').checked){const r={id:id(),...data,frequency:$('entryFrequency').value,nextDate:nextDate(data.date,$('entryFrequency').value)};db.recurring.push(r);}addTransaction(data);closeModal();toast('تم حفظ العملية بنجاح');});
 function nextDate(date,freq){const d=new Date(date+'T12:00:00');if(freq==='daily')d.setDate(d.getDate()+1);if(freq==='weekly')d.setDate(d.getDate()+7);if(freq==='monthly'){const day=d.getDate();d.setDate(1);d.setMonth(d.getMonth()+1);d.setDate(Math.min(day,new Date(d.getFullYear(),d.getMonth()+1,0).getDate()));}if(freq==='yearly')d.setFullYear(d.getFullYear()+1);return d.toISOString().slice(0,10);}
 function processRecurring(){const today=new Date().toISOString().slice(0,10);db.recurring.forEach(r=>{let guard=0;while(r.nextDate<=today&&guard++<500){const exists=db.transactions.some(t=>t.recurringId===r.id&&t.date===r.nextDate);if(!exists)db.transactions.push({id:id(),createdAt:Date.now(),type:r.type,description:r.description,category:r.description,amount:r.amount,date:r.nextDate,recurringId:r.id});r.nextDate=nextDate(r.nextDate,r.frequency);}});save();}
-// Push-to-talk: keep the button pressed while speaking; release to stop and process.
-let activeRecognition=null,voiceHeld=false,voiceStarting=false;
+// Push-to-talk audio capture. The completed audio is sent only to this app's backend for transcription.
+let mediaRecorder=null, mediaStream=null, audioChunks=[], voiceHeld=false, recordingStarting=false;
 const recordButton=$('recordButton');
-recordButton.addEventListener('pointerdown',e=>{if(e.button!==undefined&&e.button!==0)return;e.preventDefault();voiceHeld=true;try{recordButton.setPointerCapture(e.pointerId);}catch(_){}startVoice();});
+recordButton.addEventListener('pointerdown',async e=>{if(e.button!==undefined&&e.button!==0)return;e.preventDefault();if(voiceHeld)return;voiceHeld=true;try{recordButton.setPointerCapture(e.pointerId);}catch(_){}await startVoice();});
 recordButton.addEventListener('pointerup',e=>{e.preventDefault();voiceHeld=false;stopVoice();});
 recordButton.addEventListener('pointercancel',()=>{voiceHeld=false;stopVoice();});
 recordButton.addEventListener('lostpointercapture',()=>{if(voiceHeld){voiceHeld=false;stopVoice();}});
 recordButton.addEventListener('contextmenu',e=>e.preventDefault());
-// Keyboard accessibility: hold Space/Enter to speak, release to stop.
 recordButton.addEventListener('keydown',e=>{if((e.code==='Space'||e.code==='Enter')&&!e.repeat){e.preventDefault();voiceHeld=true;startVoice();}});
 recordButton.addEventListener('keyup',e=>{if(e.code==='Space'||e.code==='Enter'){e.preventDefault();voiceHeld=false;stopVoice();}});
-function startVoice(){if(activeRecognition||voiceStarting)return;const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR){voiceHeld=false;toast('التعرف الصوتي غير متاح في هذا المتصفح. جرّب Chrome أو Edge.');return;}const rec=new SR();activeRecognition=rec;voiceStarting=true;rec.lang='ar-DZ';rec.interimResults=false;rec.maxAlternatives=5;$('recordButton').classList.add('listening');$('recordLabel').textContent='واصل الضغط أثناء الكلام';$('recordHint').textContent='ارفع إصبعك عند الانتهاء';rec.onstart=()=>{voiceStarting=false;};rec.onresult=e=>{const alternatives=Array.from(e.results[e.results.length-1]||[]).map(x=>x.transcript);let parsed=null;for(const candidate of alternatives){const batch=parseVoiceBatch(candidate);if(batch.length&&(!parsed||batch.length>parsed.items.length))parsed={text:candidate,items:batch};}if(parsed){let added=0;for(const item of parsed.items){addTransaction({type:item.type,description:item.description,amount:item.amount,date:new Date().toISOString().slice(0,10)});added++;}pendingVoice=parsed.text;$('transcriptText').textContent=parsed.text+'\n\n'+parsed.items.map(x=>(x.type==='income'?'دخل':'مصروف')+' · '+x.description+' · '+money(x.amount)).join('\n');$('transcriptBox').hidden=false;$('confirmVoice').hidden=true;$('cancelVoice').textContent='إغلاق';toast(`تم حفظ ${added} ${added===1?'عملية':'عمليات'} تلقائياً`);}else{pendingVoice=alternatives[0]||'';$('transcriptText').textContent=pendingVoice+'\n\nلم أتمكن من استخراج عملية واضحة؛ لم يتم حفظ أي شيء.';$('transcriptBox').hidden=false;$('confirmVoice').hidden=true;$('cancelVoice').textContent='إغلاق';toast('لم أفهم المبلغ أو نوع العملية؛ لم يتم الحفظ.');}};rec.onerror=e=>{if(e.error!=='aborted')toast('تعذر التعرف على الصوت: '+e.error);};rec.onend=()=>{if(activeRecognition===rec)activeRecognition=null;voiceStarting=false;resetRecord();};try{rec.start();}catch(e){activeRecognition=null;voiceStarting=false;voiceHeld=false;toast('تعذر بدء التسجيل');resetRecord();}}
-function stopVoice(){if(!activeRecognition)return;try{activeRecognition.stop();}catch(_){activeRecognition=null;resetRecord();}}
-function resetRecord(){$('recordButton').classList.remove('listening');$('recordLabel').textContent='اضغط باستمرار للتسجيل';$('recordHint').textContent='اترك الزر عند الانتهاء · العربية الجزائرية';}
+async function startVoice(){
+ if(mediaRecorder||recordingStarting)return;
+ if(!navigator.mediaDevices?.getUserMedia||!window.MediaRecorder){voiceHeld=false;toast('التسجيل الصوتي غير مدعوم هنا. افتح التطبيق عبر HTTPS في Safari أو Chrome محدّث.');return;}
+ recordingStarting=true;
+ try{
+  mediaStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+  if(!voiceHeld){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null;recordingStarting=false;return;}
+  const candidates=['audio/mp4;codecs=mp4a.40.2','audio/mp4','audio/webm;codecs=opus','audio/webm'];
+  const mimeType=candidates.find(t=>MediaRecorder.isTypeSupported(t));
+  mediaRecorder=mimeType?new MediaRecorder(mediaStream,{mimeType}):new MediaRecorder(mediaStream);
+  audioChunks=[];mediaRecorder.ondataavailable=e=>{if(e.data&&e.data.size)audioChunks.push(e.data);};
+  mediaRecorder.onstop=async()=>{const type=mediaRecorder?.mimeType||audioChunks[0]?.type||'audio/mp4';const blob=new Blob(audioChunks,{type});cleanupRecorder();if(blob.size<1500){toast('لم يتم التقاط صوت واضح. حاول مرة أخرى.');return;}await transcribeAndSave(blob);};
+  mediaRecorder.onerror=()=>{cleanupRecorder();toast('حدث خطأ أثناء تسجيل الصوت.');};
+  mediaRecorder.start();recordingStarting=false;recordButton.classList.add('listening');$('recordLabel').textContent='جاري التسجيل…';$('recordHint').textContent='ارفع إصبعك لإرسال الصوت للتفريغ';
+ }catch(err){recordingStarting=false;voiceHeld=false;cleanupRecorder();toast(err.name==='NotAllowedError'?'اسمح للتطبيق باستخدام الميكروفون من إعدادات المتصفح.':'تعذر تشغيل الميكروفون. تأكد من HTTPS ومن عدم استخدامه في تطبيق آخر.');}
+}
+function stopVoice(){if(recordingStarting){voiceHeld=false;return;}if(mediaRecorder&&mediaRecorder.state!=='inactive'){recordButton.classList.remove('listening');$('recordLabel').textContent='جارٍ تحويل الكلام إلى نص…';$('recordHint').textContent='انتظر لحظة';try{mediaRecorder.stop();}catch(_){cleanupRecorder();}}}
+function cleanupRecorder(){if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null;}mediaRecorder=null;recordingStarting=false;resetRecord();}
+async function transcribeAndSave(blob){
+ try{
+  const form=new FormData();const ext=blob.type.includes('mp4')?'m4a':blob.type.includes('webm')?'webm':'bin';form.append('audio',blob,`masroufi-recording.${ext}`);
+  const response=await fetch('/api/transcribe',{method:'POST',body:form});if(!response.ok){const err=await response.json().catch(()=>({}));throw new Error(err.error||`HTTP ${response.status}`);}
+  const data=await response.json();const transcript=String(data.text||'').trim();if(!transcript)throw new Error('لم أستطع تمييز الكلام في التسجيل.');
+  const items=parseVoiceBatch(transcript);
+  $('transcriptText').textContent=transcript+(items.length?'\n\n'+items.map(x=>(x.type==='income'?'دخل':'مصروف')+' · '+x.description+' · '+money(x.amount)).join('\n'):'\n\nلم أتمكن من استخراج مبلغ ونوع عملية بشكل موثوق؛ لم يتم حفظ أي شيء.');
+  $('transcriptBox').hidden=false;$('confirmVoice').hidden=true;$('cancelVoice').textContent='إغلاق';pendingVoice=transcript;
+  if(items.length){for(const item of items)addTransaction({type:item.type,description:item.description,amount:item.amount,date:new Date().toISOString().slice(0,10)});toast(`تم حفظ ${items.length} عملية تلقائياً`);}else toast('تم تفريغ الصوت، لكن لم تُحفظ عملية لعدم وضوح المبلغ أو النوع.');
+ }catch(err){console.error(err);toast(err.message||'تعذر تحويل الصوت. تحقق من إعداد الخادم ومفتاح الخدمة.');}
+}
+function resetRecord(){$('recordButton').classList.remove('listening');$('recordLabel').textContent='اضغط باستمرار للتسجيل';$('recordHint').textContent='ارفع إصبعك عند الانتهاء · العربية الجزائرية';}
 const numberWords={'صفر':0,'واحد':1,'واحدة':1,'وحدة':1,'اثنين':2,'إثنين':2,'اثنان':2,'زوج':2,'ثلاثة':3,'ثلاث':3,'أربعة':4,'اربعة':4,'أربع':4,'خمسة':5,'خمس':5,'ستة':6,'ست':6,'سبعة':7,'سبع':7,'ثمانية':8,'ثمان':8,'تسعة':9,'تسع':9,'عشرة':10,'عشر':10,'أحد عشر':11,'اثنا عشر':12,'ثلاثة عشر':13,'أربعة عشر':14,'خمسة عشر':15,'عشرين':20,'عشرون':20,'ثلاثين':30,'أربعين':40,'خمسين':50,'ستين':60,'سبعين':70,'ثمانين':80,'تسعين':90,'مية':100,'مئة':100,'مائة':100,'مئتين':200,'ميتين':200,'ثلاثمية':300,'ربعمية':400,'خمسمية':500,'ستمية':600,'سبعمية':700,'ثمانمية':800,'تسعمية':900};
 function spokenNumber(text){const digitMatch=text.match(/(?:\d[\d.,٬٫]*)/);if(digitMatch)return Number(digitMatch[0].replace(/[٬,]/g,'').replace('٫','.'));const words=text.toLowerCase().replace(/[،,.!?]/g,' ').split(/\s+/);let total=0,group=0,found=false;for(let i=0;i<words.length;i++){let w=words[i];if(w==='و'&&i+1<words.length)continue;if(numberWords[w]!==undefined){group+=numberWords[w];found=true;continue;}if(['ألفين','الفين'].includes(w)){total+=(group||1)*2000;group=0;found=true;continue;}if(['ألف','الف','آلاف'].includes(w)){total+=group?group*1000:1000;group=0;found=true;continue;}if(['مليون','مليونين','ملايين'].includes(w)){total+=group?group*1000000:(w==='مليونين'?2000000:1000000);group=0;found=true;continue;}}return found?total+group:null;}
 function normalizeSpeech(s){return s.replace(/[إأآ]/g,'ا').replace(/[ًٌٍَُِّْ]/g,'').replace(/[٠-٩]/g,d=>'٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/٫/g,'.').replace(/٬/g,'');}
