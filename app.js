@@ -218,7 +218,7 @@ $('autoBackupNow').addEventListener('click',()=>maybeAutoBackup(true));
 /* ---------- Voice input: push-to-talk (records only while the button is held) ---------- */
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
 const PTT_MIN_MS=400,PTT_MAX_MS=60000,PTT_STOP_WAIT_MS=8000;
-let rec=null,pttState='idle',pressAt=0,startTimer=null,maxTimer=null,tickTimer=null,stopTimer=null,voiceResults=[],voiceCancelled=false,voiceErrored=false;
+let rec=null,pttState='idle',pressAt=0,startTimer=null,maxTimer=null,tickTimer=null,stopTimer=null,voiceResults=[],voiceCancelled=false,voiceErrored=false,diag=[];
 const recordBtn=$('recordButton');
 
 function resetRecord(){
@@ -233,7 +233,8 @@ function liveTranscript(){
   const text=voiceResults.map(a=>a[0]||'').join(' ').trim();
   $('transcriptBox').hidden=false;$('confirmVoice').hidden=true;$('transcriptText').textContent=text||'…';
 }
-function releaseRecognizer(r){if(!r)return;r.onresult=r.onerror=r.onend=r.onstart=null;try{r.abort();}catch(e){}}
+function dlog(n){diag.push(n+'@'+((Date.now()-pressAt)/1000).toFixed(1)+'s');}
+function releaseRecognizer(r){if(!r)return;r.onresult=r.onerror=r.onend=r.onstart=r.onaudiostart=r.onspeechstart=r.onnomatch=null;try{r.abort();}catch(e){}}
 function forceReset(){clearTimeout(maxTimer);clearInterval(tickTimer);clearTimeout(stopTimer);clearTimeout(startTimer);const r=rec;rec=null;pttState='idle';resetRecord();releaseRecognizer(r);}
 function beginPress(){
   if(pttState==='processing')finishVoice(rec);
@@ -241,21 +242,24 @@ function beginPress(){
   if(pttState!=='idle')forceReset();
   if(!SR){toast('التعرف الصوتي غير متاح في هذا المتصفح. جرّب Chrome أو Edge.');return;}
   let r;try{r=new SR();}catch(e){toast('تعذر تهيئة التعرف الصوتي');return;}
-  voiceResults=[];voiceCancelled=false;voiceErrored=false;
+  voiceResults=[];voiceCancelled=false;voiceErrored=false;diag=[];
   r.lang='ar-DZ';r.continuous=true;r.interimResults=true;r.maxAlternatives=3;
   r.onresult=ev=>{if(r!==rec)return;voiceResults=Array.from(ev.results).map(res=>Array.from(res).map(a=>a.transcript));liveTranscript();};
   r.onerror=ev=>{
     if(r!==rec)return;
-    voiceErrored=true;
+    voiceErrored=true;dlog('error:'+ev.error);
     const msg={'no-speech':'لم أسمع أي كلام. اضغط مطولاً وتحدث ثم اترك الزر.','not-allowed':'الميكروفون غير مسموح. فعّله من إعدادات المتصفح للموقع.','service-not-allowed':'الميكروفون غير مسموح. فعّله من إعدادات المتصفح للموقع.','audio-capture':'لم يُعثر على ميكروفون.','network':'التعرف الصوتي يحتاج اتصالاً بالإنترنت.','aborted':'انقطع التسجيل. حاول مرة أخرى.'}[ev.error];
     toast(msg||'تعذر التعرف على الصوت: '+ev.error);
   };
-  r.onend=()=>finishVoice(r);
-  r.onstart=()=>clearTimeout(startTimer);
+  r.onend=()=>{dlog('end');finishVoice(r);};
+  r.onstart=()=>{clearTimeout(startTimer);dlog('start');};
+  r.onaudiostart=()=>{dlog('audio');if(r===rec&&pttState==='listening')$('recordLabel').textContent='تحدث الآن… اترك الزر عند الانتهاء';};
+  r.onspeechstart=()=>dlog('speech');
+  r.onnomatch=()=>dlog('nomatch');
   rec=r;
   try{r.start();}catch(e){rec=null;toast('تعذر بدء التسجيل');return;}
   pttState='listening';pressAt=Date.now();
-  recordBtn.classList.add('listening');$('recordLabel').textContent='أستمع إليك… اترك الزر عند الانتهاء';tickRecord();
+  recordBtn.classList.add('listening');$('recordLabel').textContent='جارٍ تشغيل الميكروفون… انتظر لحظة';tickRecord();
   tickTimer=setInterval(tickRecord,250);maxTimer=setTimeout(endPress,PTT_MAX_MS);
   startTimer=setTimeout(()=>{if(pttState==='listening'&&r===rec){toast('لم يبدأ الميكروفون. تحقق من إذن الميكروفون ثم حاول مجدداً.');forceReset();}},3000);
 }
@@ -278,7 +282,7 @@ function finishVoice(r){
 }
 function processVoice(results){
   const joined=results.map(a=>a[0]||'').join(' ').replace(/\s+/g,' ').trim();
-  if(!joined){$('transcriptBox').hidden=true;toast('لم أسمع أي كلام. اضغط مطولاً وتحدث ثم اترك الزر.');return;}
+  if(!joined){$('transcriptBox').hidden=false;$('transcriptText').textContent='لم يصل أي كلام من المتصفح.\nتشخيص: '+(diag.join(' ')||'لا أحداث');toast('لم أسمع أي كلام. انتظر ظهور «تحدث الآن» ثم تحدث.');return;}
   const cands=[joined];if(results.length===1)cands.push(...results[0].slice(1));
   let best=null;
   for(const c of cands){const items=parseVoiceBatch(c);if(items.length&&(!best||items.length>best.items.length))best={text:c,items};}
