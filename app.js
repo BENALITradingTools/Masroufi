@@ -57,6 +57,7 @@ function render(){
   const now=monthKey(),isNow=viewMonth===now,tx=monthTx(viewMonth),{inc,exp}=totals(tx);
   $('monthLabel').textContent=monthLabel(viewMonth);
   $('nextMonth').disabled=viewMonth>=now;
+  $('thisMonth').hidden=isNow;
   $('balanceValue').textContent=money(inc-exp);$('incomeValue').textContent=money(inc);$('expenseValue').textContent=money(exp);
   const note=isNow?'خلال الشهر الحالي':'خلال '+monthLabel(viewMonth);
   $('incomeNote').textContent=note;$('expenseNote').textContent=note;
@@ -69,7 +70,7 @@ function render(){
   updateBackupStatus();
 }
 function transactionRow(t){
-  return `<div class="transaction-row"><div class="transaction-icon">${t.type==='income'?'↗':'↘'}</div><div class="transaction-info"><b>${escapeHtml(t.description)}</b><small>${dateText(t.date)}${t.recurringId?' · متكرر':''}</small></div><strong class="transaction-amount ${t.type}">${t.type==='income'?'+':'−'} ${money(t.amount)}</strong><button class="row-btn" data-edit="${escapeHtml(t.id)}" aria-label="تعديل">✎</button><button class="delete-button" data-delete="${escapeHtml(t.id)}" aria-label="حذف">×</button></div>`;
+  return `<div class="transaction-row"><div class="transaction-icon ${t.type}">${t.type==='income'?'↗':'↘'}</div><div class="transaction-info"><b>${escapeHtml(t.description)}</b><small>${dateText(t.date)}${t.recurringId?' · متكرر':''}</small></div><strong class="transaction-amount ${t.type}">${t.type==='income'?'+':'−'} ${money(t.amount)}</strong><button class="row-btn" data-edit="${escapeHtml(t.id)}" aria-label="تعديل">✎</button><button class="delete-button" data-delete="${escapeHtml(t.id)}" aria-label="حذف">×</button></div>`;
 }
 function renderList(target,items){$(target).innerHTML=items.length?items.map(transactionRow).join(''):'<div class="empty-state">لا توجد عمليات مسجلة بعد</div>';}
 function filterTransactions(){
@@ -215,84 +216,92 @@ async function maybeAutoBackup(force=false){if(!('indexedDB'in window))return;co
 $('backupButton').addEventListener('click',()=>download('masroufi-backup.json',JSON.stringify(backupPayload(),null,2),'application/json'));
 $('autoBackupNow').addEventListener('click',()=>maybeAutoBackup(true));
 
-/* ---------- Voice input: push-to-talk (records only while the button is held) ---------- */
+/* ---------- Voice input: push-to-talk ----------
+   كل تسجيل جلسة مستقلة: يمكن الضغط من جديد مباشرة بعد ترك الزر؛ تُعالَج الجلسة السابقة في الخلفية،
+   وتبدأ الجديدة بمجرد تحرر الميكروفون (يظهر «جارٍ تشغيل الميكروفون» خلال ذلك). */
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-const PTT_MIN_MS=400,PTT_MAX_MS=60000,PTT_STOP_WAIT_MS=8000;
-let rec=null,pttState='idle',pressAt=0,startTimer=null,maxTimer=null,tickTimer=null,stopTimer=null,voiceResults=[],voiceCancelled=false,voiceErrored=false,diag=[];
+const PTT_MAX_MS=60000,PTT_STOP_WAIT_MS=8000,PTT_OLD_WAIT_MS=1500,PTT_READY_FALLBACK_MS=1500;
 const recordBtn=$('recordButton');
+let cur=null,lastAbortAt=0;const stopping=new Set();
 
-function resetRecord(){
-  recordBtn.classList.remove('listening','processing');
-  $('recordLabel').textContent='اضغط مطولاً وتحدث';$('recordHint').textContent='اترك الزر عند الانتهاء · ar-DZ';
+function setRecordUI(mode){
+  recordBtn.dataset.state=mode;recordBtn.classList.toggle('listening',mode!=='idle');
+  if(mode==='idle'){$('recordLabel').textContent='اضغط مطولاً وتحدث';$('recordHint').textContent='اترك الزر عند الانتهاء · ar-DZ';}
+  else if(mode==='starting')$('recordLabel').textContent='جارٍ تشغيل الميكروفون… استمر بالضغط';
+  else $('recordLabel').textContent='تحدث الآن… اترك الزر عند الانتهاء';
 }
-function tickRecord(){
-  const s=Math.floor((Date.now()-pressAt)/1000);
-  $('recordHint').textContent='● '+pad(Math.floor(s/60))+':'+pad(s%60)+' · اترك الزر للإنهاء';
-}
-function liveTranscript(){
-  const text=voiceResults.map(a=>a[0]||'').join(' ').trim();
-  $('transcriptBox').hidden=false;$('confirmVoice').hidden=true;$('transcriptText').textContent=text||'…';
-}
-function dlog(n){diag.push(n+'@'+((Date.now()-pressAt)/1000).toFixed(1)+'s');}
+function dlog(s,n){s.diag.push(n+'@'+((Date.now()-s.pressAt)/1000).toFixed(1)+'s');}
+function clearTimers(s){Object.values(s.timers).forEach(t=>{clearTimeout(t);clearInterval(t);});s.timers={};}
 function releaseRecognizer(r){if(!r)return;r.onresult=r.onerror=r.onend=r.onstart=r.onaudiostart=r.onspeechstart=r.onnomatch=null;try{r.abort();}catch(e){}}
-function forceReset(){clearTimeout(maxTimer);clearInterval(tickTimer);clearTimeout(stopTimer);clearTimeout(startTimer);const r=rec;rec=null;pttState='idle';resetRecord();releaseRecognizer(r);}
+function tick(){if(!cur)return;const sec=Math.floor((Date.now()-cur.pressAt)/1000);$('recordHint').textContent='● '+pad(Math.floor(sec/60))+':'+pad(sec%60)+' · اترك الزر للإنهاء';}
+function liveTranscript(s){const text=s.results.map(a=>a[0]||'').join(' ').trim();$('transcriptBox').hidden=false;$('confirmVoice').hidden=true;$('transcriptText').textContent=text||'…';}
+function launchQueued(){const n=cur;if(n&&n.waitOld&&!stopping.size){n.waitOld=false;n.timers.q=setTimeout(()=>launch(n,0),120);}}
+
 function beginPress(){
-  if(pttState==='processing')finishVoice(rec);
-  else if(pttState==='listening'){if(Date.now()-pressAt<PTT_MIN_MS)return;forceReset();}
-  if(pttState!=='idle')forceReset();
+  if(cur){if(Date.now()-cur.pressAt<300)return;abortSession(cur);cur=null;}
   if(!SR){toast('التعرف الصوتي غير متاح في هذا المتصفح. جرّب Chrome أو Edge.');return;}
-  let r;try{r=new SR();}catch(e){toast('تعذر تهيئة التعرف الصوتي');return;}
-  voiceResults=[];voiceCancelled=false;voiceErrored=false;diag=[];
+  const s={r:null,results:[],cancelled:false,errored:false,done:false,started:false,ready:false,waitOld:false,diag:[],pressAt:Date.now(),timers:{}};
+  cur=s;setRecordUI('starting');tick();
+  s.timers.tick=setInterval(tick,250);s.timers.max=setTimeout(endPress,PTT_MAX_MS);
+  if(stopping.size){s.waitOld=true;s.timers.wait=setTimeout(()=>{[...stopping].forEach(finishSession);},PTT_OLD_WAIT_MS);}
+  else{const gap=Math.max(0,150-(Date.now()-lastAbortAt));if(gap)s.timers.q=setTimeout(()=>launch(s,0),gap);else launch(s,0);}
+}
+function launch(s,attempt){
+  if(s.done)return;
+  clearTimeout(s.timers.wait);s.waitOld=false;
+  let r;try{r=new SR();}catch(e){failSession(s,'تعذر تهيئة التعرف الصوتي');return;}
   r.lang='ar-DZ';r.continuous=true;r.interimResults=true;r.maxAlternatives=3;
-  r.onresult=ev=>{if(r!==rec)return;voiceResults=Array.from(ev.results).map(res=>Array.from(res).map(a=>a.transcript));liveTranscript();};
+  r.onstart=()=>{s.started=true;clearTimeout(s.timers.start);dlog(s,'start');};
+  r.onaudiostart=()=>{s.ready=true;dlog(s,'audio');if(cur===s)setRecordUI('speak');};
+  r.onspeechstart=()=>dlog(s,'speech');
+  r.onnomatch=()=>dlog(s,'nomatch');
+  r.onresult=ev=>{s.results=Array.from(ev.results).map(res=>Array.from(res).map(a=>a.transcript));if(cur===s)liveTranscript(s);};
   r.onerror=ev=>{
-    if(r!==rec)return;
-    voiceErrored=true;dlog('error:'+ev.error);
-    const msg={'no-speech':'لم أسمع أي كلام. اضغط مطولاً وتحدث ثم اترك الزر.','not-allowed':'الميكروفون غير مسموح. فعّله من إعدادات المتصفح للموقع.','service-not-allowed':'الميكروفون غير مسموح. فعّله من إعدادات المتصفح للموقع.','audio-capture':'لم يُعثر على ميكروفون.','network':'التعرف الصوتي يحتاج اتصالاً بالإنترنت.','aborted':'انقطع التسجيل. حاول مرة أخرى.'}[ev.error];
+    if(s.done)return;s.errored=true;dlog(s,'error:'+ev.error);
+    const msg={'no-speech':'لم أسمع أي كلام. انتظر ظهور «تحدث الآن» ثم تكلّم.','not-allowed':'الميكروفون غير مسموح. فعّله من إعدادات المتصفح للموقع.','service-not-allowed':'الميكروفون غير مسموح. فعّله من إعدادات المتصفح للموقع.','audio-capture':'لم يُعثر على ميكروفون.','network':'التعرف الصوتي يحتاج اتصالاً بالإنترنت.','aborted':'انقطع التسجيل. حاول مرة أخرى.'}[ev.error];
     toast(msg||'تعذر التعرف على الصوت: '+ev.error);
   };
-  r.onend=()=>{dlog('end');finishVoice(r);};
-  r.onstart=()=>{clearTimeout(startTimer);dlog('start');};
-  r.onaudiostart=()=>{dlog('audio');if(r===rec&&pttState==='listening')$('recordLabel').textContent='تحدث الآن… اترك الزر عند الانتهاء';};
-  r.onspeechstart=()=>dlog('speech');
-  r.onnomatch=()=>dlog('nomatch');
-  rec=r;
-  try{r.start();}catch(e){rec=null;toast('تعذر بدء التسجيل');return;}
-  pttState='listening';pressAt=Date.now();
-  recordBtn.classList.add('listening');$('recordLabel').textContent='جارٍ تشغيل الميكروفون… انتظر لحظة';tickRecord();
-  tickTimer=setInterval(tickRecord,250);maxTimer=setTimeout(endPress,PTT_MAX_MS);
-  startTimer=setTimeout(()=>{if(pttState==='listening'&&r===rec){toast('لم يبدأ الميكروفون. تحقق من إذن الميكروفون ثم حاول مجدداً.');forceReset();}},3000);
+  r.onend=()=>{dlog(s,'end');finishSession(s);};
+  s.r=r;
+  try{r.start();}catch(e){
+    s.r=null;releaseRecognizer(r);
+    if(attempt<3){s.timers.retry=setTimeout(()=>launch(s,attempt+1),250);return;}
+    failSession(s,'تعذر بدء التسجيل');return;
+  }
+  s.timers.start=setTimeout(()=>{if(!s.started&&!s.done)failSession(s,'لم يبدأ الميكروفون. تحقق من إذن الميكروفون ثم حاول مجدداً.');},3000);
 }
 function endPress(){
-  if(pttState!=='listening')return;
-  clearTimeout(maxTimer);clearInterval(tickTimer);
-  const held=Date.now()-pressAt,r=rec;
-  if(held<PTT_MIN_MS){voiceCancelled=true;try{r.abort();}catch(e){}toast('اضغط مع الاستمرار أثناء الكلام، ثم اترك الزر.');finishVoice(r);return;}
-  pttState='processing';recordBtn.classList.remove('listening');recordBtn.classList.add('processing');
-  $('recordLabel').textContent='جارٍ المعالجة…';$('recordHint').textContent='';
-  try{r.stop();}catch(e){finishVoice(r);return;}
-  stopTimer=setTimeout(()=>finishVoice(r),PTT_STOP_WAIT_MS);
+  const s=cur;if(!s)return;
+  cur=null;clearInterval(s.timers.tick);clearTimeout(s.timers.max);
+  const held=Date.now()-s.pressAt;
+  setRecordUI('idle');
+  if(!s.r||(!s.ready&&held<PTT_READY_FALLBACK_MS)){abortSession(s);toast('اضغط مطولاً وانتظر ظهور «تحدث الآن» ثم تكلّم.');return;}
+  stopping.add(s);s.timers.stop=setTimeout(()=>finishSession(s),PTT_STOP_WAIT_MS);
+  try{s.r.stop();}catch(e){finishSession(s);}
 }
-function finishVoice(r){
-  if(!r||r!==rec)return;
-  rec=null;clearTimeout(maxTimer);clearInterval(tickTimer);clearTimeout(stopTimer);clearTimeout(startTimer);
-  pttState='idle';resetRecord();releaseRecognizer(r);
-  if(voiceCancelled||voiceErrored){if($('transcriptText').textContent==='…')$('transcriptBox').hidden=true;return;}
-  processVoice(voiceResults);
+function abortSession(s){lastAbortAt=Date.now();s.cancelled=true;s.done=true;clearTimers(s);stopping.delete(s);releaseRecognizer(s.r);launchQueued();}
+function failSession(s,msg){toast(msg);s.errored=true;finishSession(s);}
+function finishSession(s){
+  if(s.done)return;
+  s.done=true;clearTimers(s);stopping.delete(s);releaseRecognizer(s.r);
+  if(cur===s){cur=null;setRecordUI('idle');}
+  launchQueued();
+  if(!s.cancelled&&!s.errored)processVoice(s);
 }
-function processVoice(results){
+function processVoice(s){
+  const results=s.results,show=!cur;
   const joined=results.map(a=>a[0]||'').join(' ').replace(/\s+/g,' ').trim();
-  if(!joined){$('transcriptBox').hidden=false;$('transcriptText').textContent='لم يصل أي كلام من المتصفح.\nتشخيص: '+(diag.join(' ')||'لا أحداث');toast('لم أسمع أي كلام. انتظر ظهور «تحدث الآن» ثم تحدث.');return;}
+  if(!joined){if(show){$('transcriptBox').hidden=false;$('transcriptText').textContent='لم يصل أي كلام من المتصفح.\nتشخيص: '+(s.diag.join(' ')||'لا أحداث');}toast('لم أسمع أي كلام. انتظر ظهور «تحدث الآن» ثم تكلّم.');return;}
   const cands=[joined];if(results.length===1)cands.push(...results[0].slice(1));
   let best=null;
   for(const c of cands){const items=parseVoiceBatch(c);if(items.length&&(!best||items.length>best.items.length))best={text:c,items};}
-  $('transcriptBox').hidden=false;$('confirmVoice').hidden=true;$('cancelVoice').textContent='إغلاق';
-  if(!best){$('transcriptText').textContent=joined+'\n\nلم أتمكن من استخراج عملية واضحة؛ لم يتم حفظ أي شيء.';toast('لم أفهم المبلغ أو نوع العملية؛ لم يتم الحفظ.');return;}
+  if(show){$('transcriptBox').hidden=false;$('confirmVoice').hidden=true;$('cancelVoice').textContent='إغلاق';}
+  if(!best){if(show)$('transcriptText').textContent=joined+'\n\nلم أتمكن من استخراج عملية واضحة؛ لم يتم حفظ أي شيء.';toast('لم أفهم المبلغ أو نوع العملية؛ لم يتم الحفظ.');return;}
   const date=localDate(),before=spendPct();
   const added=best.items.map(i=>pushTx({type:i.type,description:i.description,amount:i.amount,date}));
   save();render();
   const warn=budgetWarning(before,spendPct()),n=added.length;
-  $('transcriptText').textContent=best.text+'\n\n'+best.items.map(x=>(x.type==='income'?'دخل':'مصروف')+' · '+x.description+' · '+money(x.amount)).join('\n');
+  if(show)$('transcriptText').textContent=best.text+'\n\n'+best.items.map(x=>(x.type==='income'?'دخل':'مصروف')+' · '+x.description+' · '+money(x.amount)).join('\n');
   toast(`تم حفظ ${n} ${n===1?'عملية':'عمليات'} تلقائياً`+(warn?' · '+warn:''),{action:'تراجع',onAction:()=>{const ids=new Set(added.map(t=>t.id));db.transactions=db.transactions.filter(t=>!ids.has(t.id));save();render();toast('تم التراجع عن الإدخال الصوتي');}});
 }
 recordBtn.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'&&e.button!==0)return;e.preventDefault();try{recordBtn.setPointerCapture(e.pointerId);}catch(err){}beginPress();});
@@ -324,6 +333,7 @@ function showView(name){
 document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>showView(b.dataset.view)));
 document.querySelectorAll('[data-goto]').forEach(b=>b.addEventListener('click',()=>showView(b.dataset.goto)));
 $('prevMonth').addEventListener('click',()=>{viewMonth=shiftMonth(viewMonth,-1);render();});
+$('thisMonth').addEventListener('click',()=>{viewMonth=monthKey();render();});
 $('nextMonth').addEventListener('click',()=>{if(viewMonth<monthKey()){viewMonth=shiftMonth(viewMonth,1);render();}});
 $('openAdd').addEventListener('click',()=>openModal());$('addFromTransactions').addEventListener('click',()=>openModal());
 $('addRecurring').addEventListener('click',()=>{openModal();$('entryIsRecurring').checked=true;$('recurringOptions').hidden=false;});
