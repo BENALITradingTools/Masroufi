@@ -37,3 +37,11 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 .summary-card strong{letter-spacing:.2px}
 @media(max-width:650px){.month-nav{gap:4px;padding:4px}.nav-pill{padding:8px 9px;font-size:11px}.month-nav span#monthLabel{min-width:0;font-size:13px}.main-content{padding-bottom:calc(90px + env(safe-area-inset-bottom,0px))}.sidebar{padding-bottom:calc(6px + env(safe-area-inset-bottom,0px));height:calc(67px + env(safe-area-inset-bottom,0px))}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ---- V1.5: voice panel under the totals, brand image ---- */
+.content-grid{grid-template-columns:1fr}
+img.brand-mark{display:block;background:none;border-radius:12px;box-shadow:0 4px 14px #0004}
+.voice-body{display:grid;grid-template-columns:minmax(240px,330px) minmax(0,1fr);gap:22px;align-items:center;margin-top:14px}
+.voice-body .record-button{margin:0;min-height:170px}
+.voice-side>.muted:first-child{margin-top:0}
+@media(max-width:900px){.voice-body{grid-template-columns:1fr;gap:14px}}

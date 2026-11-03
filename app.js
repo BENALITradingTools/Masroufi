@@ -220,7 +220,7 @@ $('autoBackupNow').addEventListener('click',()=>maybeAutoBackup(true));
    كل تسجيل جلسة مستقلة: يمكن الضغط من جديد مباشرة بعد ترك الزر؛ تُعالَج الجلسة السابقة في الخلفية،
    وتبدأ الجديدة بمجرد تحرر الميكروفون (يظهر «جارٍ تشغيل الميكروفون» خلال ذلك). */
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-const PTT_MAX_MS=60000,PTT_STOP_WAIT_MS=8000,PTT_OLD_WAIT_MS=1500,PTT_READY_FALLBACK_MS=1500;
+const PTT_MAX_MS=60000,PTT_STOP_WAIT_MS=8000,PTT_OLD_WAIT_MS=700,PTT_READY_FALLBACK_MS=1500;
 const recordBtn=$('recordButton');
 let cur=null,lastAbortAt=0;const stopping=new Set();
 
@@ -232,7 +232,7 @@ function setRecordUI(mode){
 }
 function dlog(s,n){s.diag.push(n+'@'+((Date.now()-s.pressAt)/1000).toFixed(1)+'s');}
 function clearTimers(s){Object.values(s.timers).forEach(t=>{clearTimeout(t);clearInterval(t);});s.timers={};}
-function releaseRecognizer(r){if(!r)return;r.onresult=r.onerror=r.onend=r.onstart=r.onaudiostart=r.onspeechstart=r.onnomatch=null;try{r.abort();}catch(e){}}
+function releaseRecognizer(r){if(!r)return;if(!r.__ended)lastAbortAt=Date.now();r.onresult=r.onerror=r.onend=r.onstart=r.onaudiostart=r.onspeechstart=r.onnomatch=null;try{r.abort();}catch(e){}}
 function tick(){if(!cur)return;const sec=Math.floor((Date.now()-cur.pressAt)/1000);$('recordHint').textContent='● '+pad(Math.floor(sec/60))+':'+pad(sec%60)+' · اترك الزر للإنهاء';}
 function liveTranscript(s){const text=s.results.map(a=>a[0]||'').join(' ').trim();$('transcriptBox').hidden=false;$('confirmVoice').hidden=true;$('transcriptText').textContent=text||'…';}
 function launchQueued(){const n=cur;if(n&&n.waitOld&&!stopping.size){n.waitOld=false;n.timers.q=setTimeout(()=>launch(n,0),120);}}
@@ -240,10 +240,15 @@ function launchQueued(){const n=cur;if(n&&n.waitOld&&!stopping.size){n.waitOld=f
 function beginPress(){
   if(cur){if(Date.now()-cur.pressAt<300)return;abortSession(cur);cur=null;}
   if(!SR){toast('التعرف الصوتي غير متاح في هذا المتصفح. جرّب Chrome أو Edge.');return;}
-  const s={r:null,results:[],cancelled:false,errored:false,done:false,started:false,ready:false,waitOld:false,diag:[],pressAt:Date.now(),timers:{}};
+  const s={r:null,results:[],final:[],forced:false,cancelled:false,errored:false,done:false,started:false,ready:false,waitOld:false,diag:[],pressAt:Date.now(),timers:{}};
   cur=s;setRecordUI('starting');tick();
   s.timers.tick=setInterval(tick,250);s.timers.max=setTimeout(endPress,PTT_MAX_MS);
-  if(stopping.size){s.waitOld=true;s.timers.wait=setTimeout(()=>{[...stopping].forEach(finishSession);},PTT_OLD_WAIT_MS);}
+  if(stopping.size){
+    s.waitOld=true;
+    // الجلسة السابقة التي اكتمل نصها (أو لم تلتقط شيئاً) تُنهى فوراً؛ غير المكتملة تُمهَل قليلاً حتى لا يُحفظ مبلغ مقطوع
+    for(const o of [...stopping]){if(!o.results.length||o.final.every(Boolean))finishSession(o);}
+    if(stopping.size)s.timers.wait=setTimeout(()=>{[...stopping].forEach(forceFinish);},PTT_OLD_WAIT_MS);
+  }
   else{const gap=Math.max(0,150-(Date.now()-lastAbortAt));if(gap)s.timers.q=setTimeout(()=>launch(s,0),gap);else launch(s,0);}
 }
 function launch(s,attempt){
@@ -252,16 +257,16 @@ function launch(s,attempt){
   let r;try{r=new SR();}catch(e){failSession(s,'تعذر تهيئة التعرف الصوتي');return;}
   r.lang='ar-DZ';r.continuous=true;r.interimResults=true;r.maxAlternatives=3;
   r.onstart=()=>{s.started=true;clearTimeout(s.timers.start);dlog(s,'start');};
-  r.onaudiostart=()=>{s.ready=true;dlog(s,'audio');if(cur===s)setRecordUI('speak');};
+  r.onaudiostart=()=>{s.ready=true;dlog(s,'audio');if(cur===s){setRecordUI('speak');try{if(navigator.vibrate)navigator.vibrate(35);}catch(e){}}};
   r.onspeechstart=()=>dlog(s,'speech');
   r.onnomatch=()=>dlog(s,'nomatch');
-  r.onresult=ev=>{s.results=Array.from(ev.results).map(res=>Array.from(res).map(a=>a.transcript));if(cur===s)liveTranscript(s);};
+  r.onresult=ev=>{s.results=Array.from(ev.results).map(res=>Array.from(res).map(a=>a.transcript));s.final=Array.from(ev.results).map(res=>!!res.isFinal);if(cur===s)liveTranscript(s);};
   r.onerror=ev=>{
     if(s.done)return;s.errored=true;dlog(s,'error:'+ev.error);
     const msg={'no-speech':'لم أسمع أي كلام. انتظر ظهور «تحدث الآن» ثم تكلّم.','not-allowed':'الميكروفون غير مسموح. فعّله من إعدادات المتصفح للموقع.','service-not-allowed':'الميكروفون غير مسموح. فعّله من إعدادات المتصفح للموقع.','audio-capture':'لم يُعثر على ميكروفون.','network':'التعرف الصوتي يحتاج اتصالاً بالإنترنت.','aborted':'انقطع التسجيل. حاول مرة أخرى.'}[ev.error];
-    toast(msg||'تعذر التعرف على الصوت: '+ev.error);
+    toast(msg||'تعذر التعرف على الصوت: '+ev.error);showDiag(s,'خطأ من المتصفح: '+ev.error);
   };
-  r.onend=()=>{dlog(s,'end');finishSession(s);};
+  r.onend=()=>{r.__ended=true;dlog(s,'end');finishSession(s);};
   s.r=r;
   try{r.start();}catch(e){
     s.r=null;releaseRecognizer(r);
@@ -275,23 +280,28 @@ function endPress(){
   cur=null;clearInterval(s.timers.tick);clearTimeout(s.timers.max);
   const held=Date.now()-s.pressAt;
   setRecordUI('idle');
-  if(!s.r||(!s.ready&&held<PTT_READY_FALLBACK_MS)){abortSession(s);toast('اضغط مطولاً وانتظر ظهور «تحدث الآن» ثم تكلّم.');return;}
-  stopping.add(s);s.timers.stop=setTimeout(()=>finishSession(s),PTT_STOP_WAIT_MS);
+  if(!s.r||(!s.ready&&held<PTT_READY_FALLBACK_MS)){abortSession(s);toast('اضغط مطولاً وانتظر ظهور «تحدث الآن» ثم تكلّم.');showDiag(s,'أُلغي التسجيل: تركت الزر قبل أن يصبح الميكروفون جاهزاً.');return;}
+  stopping.add(s);s.timers.stop=setTimeout(()=>forceFinish(s),PTT_STOP_WAIT_MS);
   try{s.r.stop();}catch(e){finishSession(s);}
 }
 function abortSession(s){lastAbortAt=Date.now();s.cancelled=true;s.done=true;clearTimers(s);stopping.delete(s);releaseRecognizer(s.r);launchQueued();}
-function failSession(s,msg){toast(msg);s.errored=true;finishSession(s);}
+function forceFinish(o){o.forced=true;finishSession(o);}
+function showDiag(s,msg){if(cur&&cur!==s)return;$('transcriptBox').hidden=false;$('confirmVoice').hidden=true;$('transcriptText').textContent=msg+'\nتشخيص: '+(s.diag.join(' ')||'لا أحداث');}
+function failSession(s,msg){toast(msg);showDiag(s,msg);s.errored=true;finishSession(s);}
 function finishSession(s){
   if(s.done)return;
   s.done=true;clearTimers(s);stopping.delete(s);releaseRecognizer(s.r);
   if(cur===s){cur=null;setRecordUI('idle');}
   launchQueued();
-  if(!s.cancelled&&!s.errored)processVoice(s);
+  if(!s.cancelled&&!s.errored){
+    if(s.forced&&s.results.length&&!s.final.every(Boolean)){toast('لم يكتمل التعرف على التسجيل السابق فلم يُحفظ. أعد تسجيله.');showDiag(s,'لم يكتمل التعرف على الكلام قبل بدء تسجيل جديد.');}
+    else processVoice(s);
+  }
 }
 function processVoice(s){
   const results=s.results,show=!cur;
   const joined=results.map(a=>a[0]||'').join(' ').replace(/\s+/g,' ').trim();
-  if(!joined){if(show){$('transcriptBox').hidden=false;$('transcriptText').textContent='لم يصل أي كلام من المتصفح.\nتشخيص: '+(s.diag.join(' ')||'لا أحداث');}toast('لم أسمع أي كلام. انتظر ظهور «تحدث الآن» ثم تكلّم.');return;}
+  if(!joined){if(show)showDiag(s,'لم يصل أي كلام من المتصفح.');toast('لم أسمع أي كلام. انتظر ظهور «تحدث الآن» ثم تكلّم.');return;}
   const cands=[joined];if(results.length===1)cands.push(...results[0].slice(1));
   let best=null;
   for(const c of cands){const items=parseVoiceBatch(c);if(items.length&&(!best||items.length>best.items.length))best={text:c,items};}

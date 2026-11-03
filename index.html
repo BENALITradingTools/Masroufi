@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#111827"><meta name="description" content="مصروفي - سجل دخلك ومصاريفك بسهولة بالصوت أو الكتابة">
-  <link rel="manifest" href="manifest.webmanifest"><link rel="stylesheet" href="styles.css">
+  <link rel="manifest" href="manifest.webmanifest"><link rel="icon" type="image/svg+xml" href="icon.svg"><link rel="icon" type="image/png" sizes="32x32" href="icon-32.png"><link rel="apple-touch-icon" href="apple-touch-icon.png"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="مصروفي"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><link rel="stylesheet" href="styles.css">
   <title>مصروفي | Masroufi</title>
 </head>
 <body>
 <div class="app-shell">
   <aside class="sidebar">
-    <a class="brand" href="#"><span class="brand-mark">م</span><span><b>مصروفي</b><small>MASROUFI</small></span></a>
+    <a class="brand" href="#"><img class="brand-mark" src="icon.svg" alt="" width="43" height="43"><span><b>مصروفي</b><small>MASROUFI</small></span></a>
     <nav>
       <button class="nav-link active" data-view="dashboard"><span>⌂</span> الرئيسية</button>
       <button class="nav-link" data-view="transactions"><span>↕</span> العمليات</button>
@@ -26,15 +26,15 @@
         <article class="summary-card"><span>إجمالي الدخل</span><strong class="income-text" id="incomeValue">0 دج</strong><small id="incomeNote">خلال الشهر الحالي</small><div class="card-symbol">↗</div></article>
         <article class="summary-card"><span>إجمالي المصاريف</span><strong class="expense-text" id="expenseValue">0 دج</strong><small id="expenseNote">خلال الشهر الحالي</small><div class="card-symbol">↘</div></article>
       </div>
-      <section class="panel budget-panel"><div class="panel-heading"><div><p class="eyebrow">التحكم في الإنفاق</p><h2>ميزانية الشهر</h2></div><div class="budget-form"><input id="budgetInput" type="number" inputmode="decimal" min="0" step="1" placeholder="المبلغ الشهري" aria-label="الميزانية الشهرية"><button class="secondary-button" id="saveBudget">حفظ</button></div></div><div id="budgetBody"></div></section>
-      <div class="content-grid">
-        <section class="panel voice-panel"><div class="panel-heading"><div><p class="eyebrow">إضافة سريعة</p><h2>سجّل بالصوت</h2></div><span class="live-dot"></span></div>
-          <p class="muted">اضغط مع الاستمرار وتحدث، ثم اترك الزر. مثال: «خلصت 1500 دينار بنزين» أو «دخلتلي 5000 دينار خدمة»</p>
-          <button id="recordButton" class="record-button" aria-label="اضغط مطولاً للتسجيل الصوتي"><span class="mic-icon">🎙</span><b id="recordLabel">اضغط مطولاً وتحدث</b><small id="recordHint">اترك الزر عند الانتهاء · ar-DZ</small></button>
+      <section class="panel voice-panel"><div class="panel-heading"><div><p class="eyebrow">إضافة سريعة</p><h2>سجّل بالصوت</h2></div><span class="live-dot"></span></div>
+          <div class="voice-body"><button id="recordButton" class="record-button" aria-label="اضغط مطولاً للتسجيل الصوتي"><span class="mic-icon">🎙</span><b id="recordLabel">اضغط مطولاً وتحدث</b><small id="recordHint">اترك الزر عند الانتهاء · ar-DZ</small></button><div class="voice-side"><p class="muted">اضغط مع الاستمرار وتحدث، ثم اترك الزر. مثال: «خلصت 1500 دينار بنزين» أو «دخلتلي 5000 دينار خدمة»</p>
           <div class="transcript" id="transcriptBox" hidden><span>النص المسموع</span><p id="transcriptText"></p><div class="transcript-actions"><button id="confirmVoice" class="primary-button" hidden>تأكيد وإضافة</button><button id="cancelVoice" class="ghost-button">إغلاق</button></div></div>
           <div class="manual-entry"><button id="openAdd" class="secondary-button">＋ إضافة يدوية</button><button id="exportButton" class="ghost-button">⇩ تصدير CSV</button></div>
           <p class="voice-warning" id="voiceWarning">التسجيل يعمل فقط أثناء الضغط على الزر. قد يتطلب التعرف الصوتي اتصالاً بالإنترنت ومتصفحاً يدعمه.</p>
-        </section>
+        </div></div></section>
+      <section class="panel budget-panel"><div class="panel-heading"><div><p class="eyebrow">التحكم في الإنفاق</p><h2>ميزانية الشهر</h2></div><div class="budget-form"><input id="budgetInput" type="number" inputmode="decimal" min="0" step="1" placeholder="المبلغ الشهري" aria-label="الميزانية الشهرية"><button class="secondary-button" id="saveBudget">حفظ</button></div></div><div id="budgetBody"></div></section>
+      <div class="content-grid">
+        
         <section class="panel chart-panel"><div class="panel-heading"><div><p class="eyebrow">تحليل مالي</p><h2>الدخل مقابل المصاريف</h2></div><span class="period-pill" id="periodPill">هذا الشهر</span></div><div class="chart-wrap"><canvas id="overviewChart" height="220" aria-label="رسم بياني للدخل والمصاريف"></canvas><div id="chartEmpty" class="empty-chart">أضف عملياتك لعرض التحليل</div></div></section>
       </div>
       <section class="panel recent-panel"><div class="panel-heading"><div><p class="eyebrow">آخر ما سجلته</p><h2>أحدث العمليات</h2></div><button class="text-button" data-goto="transactions">عرض الكل ←</button></div><div id="recentList" class="transaction-list"></div></section>
