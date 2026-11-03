@@ -233,8 +233,29 @@ function setRecordUI(mode){
 function dlog(s,n){s.diag.push(n+'@'+((Date.now()-s.pressAt)/1000).toFixed(1)+'s');}
 function clearTimers(s){Object.values(s.timers).forEach(t=>{clearTimeout(t);clearInterval(t);});s.timers={};}
 function releaseRecognizer(r){if(!r)return;lastFreeAt=Date.now();r.onresult=r.onerror=r.onend=r.onstart=r.onaudiostart=r.onspeechstart=r.onnomatch=r.onsoundstart=r.onsoundend=r.onspeechend=r.onaudioend=null;try{r.abort();}catch(e){}}
+
+/* دمج نتائج التعرف: Chrome على أندرويد (الوضع المستمر) يعيد كل تحديث كنتيجة تراكمية جديدة
+   («خلصت» ثم «خلصت 1500» ثم «خلصت 1500 دينار بنزين») فكان الضمّ البسيط يكرر الكلمة الأولى والمبلغ.
+   أما سطح المكتب فيعيد أجزاء منفصلة. تُعالَج الحالتان هنا. */
+function tokensOf(t){return String(t||'').replace(/\s+/g,' ').trim().split(' ').map(raw=>({raw,n:normalizeSpeech(raw).replace(/[،,.؟?!]/g,'')})).filter(x=>x.n);}
+function containsRun(hay,needle){if(!needle.length||needle.length>hay.length)return false;for(let i=0;i<=hay.length-needle.length;i++){let ok=true;for(let j=0;j<needle.length;j++)if(hay[i+j].n!==needle[j].n){ok=false;break;}if(ok)return true;}return false;}
+function mergeTranscripts(list){
+  let acc=[];
+  for(const part of list){
+    const t=tokensOf(part);if(!t.length)continue;
+    if(!acc.length){acc=t;continue;}
+    if(t.length>=acc.length&&acc.every((x,i)=>t[i].n===x.n)){acc=t;continue;}   // تراكمي: الجديد يحوي كل ما سبق
+    if(containsRun(acc,t))continue;                                               // تكرار لما لدينا
+    let k=Math.min(acc.length,t.length)-1;                                        // تداخل: ذيل ما سبق = رأس الجديد
+    for(;k>=1;k--){if(acc.slice(-k).every((x,i)=>x.n===t[i].n))break;}
+    if(k>=2||(k===1&&!/\d/.test(t[0].n)))acc=acc.concat(t.slice(k));
+    else acc=acc.concat(t);
+  }
+  if(acc.length>1&&acc[0].n===acc[1].n&&!/\d/.test(acc[0].n))acc.shift();         // «خلصت خلصت 1500» -> «خلصت 1500»
+  return acc.map(x=>x.raw).join(' ');
+}
 function tick(){if(!cur)return;const sec=Math.floor((Date.now()-cur.pressAt)/1000);$('recordHint').textContent='● '+pad(Math.floor(sec/60))+':'+pad(sec%60)+' · اترك الزر للإنهاء';}
-function liveTranscript(s){const text=s.results.map(a=>a[0]||'').join(' ').trim();$('transcriptBox').hidden=false;$('confirmVoice').hidden=true;$('transcriptText').textContent=text||'…';}
+function liveTranscript(s){const text=mergeTranscripts(s.results.map(a=>a[0]));$('transcriptBox').hidden=false;$('confirmVoice').hidden=true;$('transcriptText').textContent=text||'…';}
 function launchQueued(){const n=cur;if(n&&n.waitOld&&!stopping.size){n.waitOld=false;n.timers.q=setTimeout(()=>launch(n,0),Math.max(120,PTT_WARMUP_MS-(Date.now()-lastFreeAt)));}}
 
 function beginPress(){
@@ -303,7 +324,7 @@ function finishSession(s){
 }
 function processVoice(s){
   const results=s.results,show=!cur;
-  const joined=results.map(a=>a[0]||'').join(' ').replace(/\s+/g,' ').trim();
+  const joined=mergeTranscripts(results.map(a=>a[0]));
   if(!joined){if(show)showDiag(s,'لم يصل أي كلام من المتصفح.');toast('لم أسمع أي كلام. انتظر ظهور «تحدث الآن» ثم تكلّم.');return;}
   const cands=[joined];if(results.length===1)cands.push(...results[0].slice(1));
   let best=null;
